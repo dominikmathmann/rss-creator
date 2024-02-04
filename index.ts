@@ -5,56 +5,104 @@ import * as fs from "fs";
 import path from "path";
 import { createHash } from 'crypto';
 
-const URL = "http://www.radiobielefeld.de/nachrichten/lokalnachrichten.html";
 
 interface News {
-  header?: string;
-  txt?: string;
-  link?: string;
-  date?: string;
-  img?: string;
+  title?: string,
+  image: string,
+  filename: string
+
+  entries: {
+    header?: string;
+    txt?: string;
+    link?: string;
+    date?: string;
+    img?: string;
+  }[]
 }
 
-axios.get(URL).then((r) => {
-  const $ = load(r.data);
-  let links = $("#c1223 .news .list-news")
-    .toArray()
-    .map((e) => $(e).find("a")[0].attribs["href"]);
-  zip(links.map((l) => loadNews(l))).subscribe((news) => {
-    write(news);
+
+// loadRadioBielefeld();
+loadEatClub();
+
+
+function loadEatClub() {
+  const URL = "https://www.eatclub.tv/aktuelles";
+
+  axios.get(URL).then((r) => {
+    const $ = load(r.data);
+    let links = $(".entry-title a")
+      .toArray()
+      .map((e) => e.attribs["href"]);
+    zip(links.map((l) => {
+      return from(axios.get(l)).pipe(
+        map((r) => {
+          let $ = load(r.data);
+          const header = $("h2.entry-title ").text();
+          const txt = $(".article-body>p,.article-body ol,.article-body li").toArray().map(e => $(e).html()).join("<br/>");
+          const date = $("time.entry-date").attr("datetime");
+          const img = $(".post-thumbnail img").attr("src");
+          return { header, txt, link: l, date: date, img };
+        })
+      );
+    })).subscribe((news) => {
+      write({
+        filename: "eat-club.xml",
+        image: "https://www.eatclub.tv/wp-content/uploads/2023/12/logo-ec-einzeilig-weiss.png",
+        title: "EatClub",
+        entries: news,
+      });
+    });
   });
-});
-
-function loadNews(link: string): Observable<News> {
-  const fullLink = "http://www.radiobielefeld.de/" + link;
-  return from(axios.get(fullLink)).pipe(
-    map((r) => {
-      let $ = load(r.data);
-      const header = $("h1").text();
-      const txt = $(".news-text-wrap").text().trim();
-      const dateSplit = $("meta[itemprop='datePublished']").attr("content")?.split("-") || [1,1,1]
-      const date = new Date();
-      date.setFullYear(dateSplit[0] as number);
-      date.setMonth((dateSplit[1] as number) - 1);
-      date.setDate(dateSplit[2] as number);
-      const img = $("div.mediaelement img.img-responsive").attr("src");
-      return { header, txt, link: fullLink, date: date.toISOString(), img};
-    })
-  );
 }
 
-function write(news: News[]) {
+
+
+function loadRadioBielefeld() {
+  const URL = "http://www.radiobielefeld.de/nachrichten/lokalnachrichten.html";
+
+  axios.get(URL).then((r) => {
+    const $ = load(r.data);
+    let links = $("#c1223 .news .list-news")
+      .toArray()
+      .map((e) => $(e).find("a")[0].attribs["href"]);
+    zip(links.map((l) => {
+      const fullLink = "http://www.radiobielefeld.de/" + l;
+      return from(axios.get(fullLink)).pipe(
+        map((r) => {
+          let $ = load(r.data);
+          const header = $("h1").text();
+          const txt = $(".news-text-wrap").text().trim();
+          const dateSplit = $("meta[itemprop='datePublished']").attr("content")?.split("-") || [1, 1, 1]
+          const date = new Date();
+          date.setFullYear(dateSplit[0] as number);
+          date.setMonth((dateSplit[1] as number) - 1);
+          date.setDate(dateSplit[2] as number);
+          const img = $("div.mediaelement img.img-responsive").attr("src");
+          return { header, txt, link: fullLink, date: date.toISOString(), img };
+        })
+      );
+    })).subscribe((news) => {
+      write({
+        filename: "local-bi.xml",
+        image: "https://upload.wikimedia.org/wikipedia/commons/3/34/Radio_Bielefeld_logo.svg",
+        title: "Radio Bielefeld Lokal",
+        entries: news,
+      });
+    });
+  });
+}
+
+function write(news: News) {
   let content = `<?xml version="1.0" encoding="utf-8"?>
       <rss version="2.0">
       <channel>
-        <title>DD Radio Bielefeld Lokal</title>
+        <title>${news.title}</title>
         <pubDate>Erstellungsdatum(${new Date().toISOString()})</pubDate>
         <image>
-        <url>https://www.radiobielefeld.de/</url>
+        <url>${news.image}</url>
         </image>
-        ${news
-          .map(
-            (n) => `
+        ${news.entries.map(
+        (n) => `
         <item>
             <title>${n.header}</title>
             <description>
@@ -65,10 +113,10 @@ function write(news: News[]) {
             <pubDate>${n.date}</pubDate>
         </item>
         `
-          )
-          .join("")}
+      )
+      .join("")}
         </channel>
         </rss>
     `;
-  fs.writeFileSync(path.join(".", "local-bi.xml"), content);
+  fs.writeFileSync(path.join(".", news.filename), content);
 }
